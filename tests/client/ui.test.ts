@@ -43,6 +43,15 @@ describe('AppShell', () => {
     expect(document.querySelector('[aria-label="跳跃"]')).not.toBeNull();
   });
 
+  it('shows the current classical work in the game HUD', () => {
+    const shell = createShell();
+    shell.renderGame();
+    shell.showNowPlaying({ composer: '莫扎特', title: '《小夜曲》K.525·主题编曲' });
+
+    expect(document.querySelector('[data-now-playing]')?.textContent)
+      .toBe('正在演奏：莫扎特 · 《小夜曲》K.525·主题编曲');
+  });
+
   it('announces analysis and moves focus to the continue button', () => {
     const shell = createShell();
     shell.renderGame();

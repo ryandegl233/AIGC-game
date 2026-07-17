@@ -9,7 +9,7 @@ describe('level configuration', () => {
   });
 
   it('uses the approved descending timers', () => {
-    expect(LEVELS.map((level) => level.timeLimit)).toEqual([30, 28, 26, 24, 22, 21, 19, 18, 16]);
+    expect(LEVELS.map((level) => level.timeLimit)).toEqual([34, 32, 30, 28, 27, 26, 25, 24, 23]);
   });
 
   it('introduces mechanics progressively and ends with a combination', () => {

@@ -24,7 +24,7 @@ interface UiPort {
 }
 
 interface ScenePort {
-  presentQuestion(question: Question, offsets: readonly [number, number, number]): void;
+  presentQuestion(question: Question, level: LevelConfig, routeVariant: number): void;
   setRunning(running: boolean): void;
 }
 
@@ -49,6 +49,16 @@ interface ClockPort {
   clearInterval(handle: unknown): void;
 }
 
+interface AudioLifecyclePort {
+  startLevel(levelId: number): unknown;
+  startRun(): void;
+  showAnalysis(correct: boolean): void;
+  pause(): void;
+  resume(): void;
+  stop(): void;
+  routePenalty(): void;
+}
+
 export interface ControllerDependencies {
   ui: UiPort;
   scene: ScenePort;
@@ -57,6 +67,7 @@ export interface ControllerDependencies {
   saveStore: SaveStorePort;
   createMechanic(level: LevelConfig): MechanicLifecycle;
   clock?: ClockPort;
+  audio?: AudioLifecyclePort;
   onExitLevel?: () => void;
 }
 
@@ -77,6 +88,7 @@ export class GameController {
   private lastOutcome?: AttemptOutcome;
   private excludedIds: string[] = [];
   private excludedPrompts: string[] = [];
+  private routeVariant = 0;
 
   constructor(private readonly dependencies: ControllerDependencies) {}
 
@@ -85,6 +97,8 @@ export class GameController {
     this.levelState = createLevelState(levelId);
     this.excludedIds = [];
     this.excludedPrompts = [];
+    this.routeVariant = 0;
+    this.dependencies.audio?.startLevel(levelId);
     await this.prepareQuestion(true);
   }
 
@@ -95,6 +109,7 @@ export class GameController {
     this.dependencies.ui.setStatus('演奏开始：跳上代表正确答案的平台。');
     this.mechanic?.start();
     this.dependencies.scene.setRunning(true);
+    this.dependencies.audio?.startRun();
     this.startTimer();
   }
 
@@ -104,10 +119,23 @@ export class GameController {
     await this.finishAttempt(outcome, selectedIndex);
   }
 
+  applyRoutePenalty(seconds = 3): void {
+    if (this.phase !== 'running' || !this.question) return;
+    this.secondsRemaining = Math.max(0, this.secondsRemaining - seconds);
+    this.updateHud();
+    this.dependencies.ui.setStatus(`撞上升号障碍：退回起点，扣除 ${seconds} 秒。`);
+    this.dependencies.audio?.routePenalty();
+    if (this.secondsRemaining === 0) {
+      const wrongIndex = (this.question.correctIndex + 1) % 3;
+      void this.finishAttempt('timeout', wrongIndex);
+    }
+  }
+
   pause(): void {
     if (this.phase !== 'running') return;
     this.stopMotionAndTimer();
     this.phase = 'paused';
+    this.dependencies.audio?.pause();
     this.dependencies.ui.showPause(() => this.resume(), () => this.exitLevel());
   }
 
@@ -117,11 +145,13 @@ export class GameController {
     this.phase = 'running';
     this.dependencies.scene.setRunning(true);
     this.mechanic?.start();
+    this.dependencies.audio?.resume();
     this.startTimer();
   }
 
   dispose(): void {
     this.stopMotionAndTimer();
+    this.dependencies.audio?.stop();
     this.phase = 'disposed';
   }
 
@@ -143,8 +173,8 @@ export class GameController {
     }
 
     this.dependencies.ui.showQuestion(this.question);
-    const offsets = this.retryOffsets();
-    this.dependencies.scene.presentQuestion(this.question, offsets);
+    this.dependencies.scene.presentQuestion(this.question, this.level, this.routeVariant);
+    this.routeVariant = (this.routeVariant + 1) % 3;
     this.mechanic = this.dependencies.createMechanic(this.level);
     this.secondsRemaining = this.level.timeLimit;
     this.updateHud();
@@ -175,6 +205,7 @@ export class GameController {
       question: this.question,
       selectedIndex,
     });
+    this.dependencies.audio?.showAnalysis(outcome === 'correct');
     this.phase = 'analysis';
     this.dependencies.ui.showAnalysis({
       ...analysis,
@@ -244,14 +275,6 @@ export class GameController {
       bestScores,
       recentQuestionIds,
     });
-  }
-
-  private retryOffsets(): readonly [number, number, number] {
-    if (this.lastOutcome === 'wrong' || this.lastOutcome === 'timeout') {
-      const [first, second, third] = this.level.verticalOffsets;
-      return [third, first, second];
-    }
-    return this.level.verticalOffsets;
   }
 
   private exitLevel(): void {

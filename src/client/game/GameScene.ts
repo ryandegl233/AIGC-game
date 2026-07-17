@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 
 import type { Question } from '../../shared/question-schema';
-import { calculatePlatformLayout, canLandOnOneWayPlatform } from './platform-layout';
+import type { LevelConfig } from './level-config';
+import { canLandOnOneWayPlatform } from './platform-layout';
+import { buildRouteLayout, wrapPlatformLabel } from './route-layout';
 import { createTrebleClef, playLandingFeedback } from './treble-clef';
 
 export const WORLD_WIDTH = 1_200;
@@ -17,6 +19,7 @@ export class GameScene extends Phaser.Scene {
   private player!: Phaser.Physics.Arcade.Sprite;
   private ground!: Phaser.GameObjects.Rectangle;
   private platforms!: Phaser.Physics.Arcade.StaticGroup;
+  private hazards!: Phaser.Physics.Arcade.StaticGroup;
   private labels: Phaser.GameObjects.Text[] = [];
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private keys!: Record<'left' | 'right' | 'jump', Phaser.Input.Keyboard.Key>;
@@ -29,6 +32,7 @@ export class GameScene extends Phaser.Scene {
   private lastGroundedAt = 0;
   private jumpPressedAt = Number.NEGATIVE_INFINITY;
   private wasGrounded = false;
+  private hazardLocked = false;
 
   constructor() {
     super('game');
@@ -38,10 +42,12 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#eadcb9');
     this.createBackdrop();
     this.ensurePlatformTexture();
+    this.ensureRouteTextures();
 
     this.ground = this.add.rectangle(WORLD_WIDTH / 2, GROUND_Y + 28, WORLD_WIDTH, 56, 0x2f1b0f);
     this.physics.add.existing(this.ground, true);
     this.platforms = this.physics.add.staticGroup();
+    this.hazards = this.physics.add.staticGroup();
     this.player = createTrebleClef(this, WORLD_WIDTH / 2, GROUND_Y - 70);
     this.physics.add.collider(this.player, this.ground);
     this.physics.add.collider(
@@ -58,6 +64,7 @@ export class GameScene extends Phaser.Scene {
         );
       },
     );
+    this.physics.add.overlap(this.player, this.hazards, () => this.hitHazard());
 
     const keyboard = this.input.keyboard;
     if (!keyboard) throw new Error('Keyboard input is unavailable');
@@ -89,43 +96,67 @@ export class GameScene extends Phaser.Scene {
     if (time - this.jumpPressedAt <= 120 && time - this.lastGroundedAt <= 100) {
       body.setVelocityY(-720);
       this.jumpPressedAt = Number.NEGATIVE_INFINITY;
+      this.events.emit('player-jump');
       if (!this.reducedMotion) this.tweens.add({ targets: this.player, angle: 10, yoyo: true, duration: 180 });
     }
 
-    if (grounded && !this.wasGrounded) playLandingFeedback(this, this.player, this.reducedMotion);
+    if (grounded && !this.wasGrounded) {
+      playLandingFeedback(this, this.player, this.reducedMotion);
+      this.events.emit('player-land');
+    }
     this.wasGrounded = grounded;
     this.checkAnswerLanding();
   }
 
   presentQuestion(
     question: Question,
-    verticalOffsets: readonly [number, number, number] = [12, -18, 6],
+    level: LevelConfig,
+    routeVariant = 0,
   ): void {
     this.platforms.clear(true, true);
+    this.hazards.clear(true, true);
     this.labels.forEach((label) => label.destroy());
     this.labels = [];
     this.answerLocked = false;
-    this.player.setPosition(WORLD_WIDTH / 2, GROUND_Y - 70);
+    this.hazardLocked = false;
+    const layout = buildRouteLayout(level.id, routeVariant);
+    this.player.setPosition(layout.spawn.x, layout.spawn.y);
     this.player.setVelocity(0, 0);
 
-    const layout = calculatePlatformLayout(WORLD_WIDTH, 120, verticalOffsets);
-    for (const placement of layout) {
-      const y = 485 + placement.offsetY;
+    for (const placement of [...layout.supportPlatforms, ...layout.answerPlatforms]) {
       const platform = this.platforms.create(
-        placement.centerX,
-        y,
-        'answer-platform',
+        placement.x,
+        placement.y,
+        placement.kind === 'answer' ? 'answer-platform' : 'route-platform',
       ) as Phaser.Physics.Arcade.Sprite;
-      platform.setDisplaySize(placement.width, 48).refreshBody();
-      platform.setData('answerIndex', placement.answerIndex);
-      const label = this.add.text(placement.centerX, y - 4, question.options[placement.answerIndex], {
+      platform.setDisplaySize(placement.width, placement.height).refreshBody();
+      platform.setData({
+        answerIndex: placement.answerIndex,
+        kind: placement.kind,
+        motion: placement.motion,
+        routeIndex: placement.routeIndex,
+      });
+      if (placement.kind !== 'answer' || placement.answerIndex === undefined) continue;
+      const labelText = wrapPlatformLabel(question.options[placement.answerIndex], 10);
+      const lineCount = labelText.split('\n').length;
+      const label = this.add.text(placement.x, placement.y - 4, labelText, {
         fontFamily: '"Noto Serif SC", "Songti SC", serif',
-        fontSize: '21px',
+        fontSize: lineCount >= 3 ? '14px' : lineCount === 2 ? '16px' : '18px',
         color: '#fff2cb',
         align: 'center',
+        lineSpacing: -2,
         wordWrap: { width: placement.width - 28 },
       }).setOrigin(0.5);
       this.labels.push(label);
+    }
+
+    for (const hazardPlacement of layout.hazards) {
+      const hazard = this.hazards.create(
+        hazardPlacement.x,
+        hazardPlacement.y,
+        'sharp-hazard',
+      ) as Phaser.Physics.Arcade.Sprite;
+      hazard.setDisplaySize(hazardPlacement.width, hazardPlacement.height).refreshBody();
     }
   }
 
@@ -145,6 +176,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   getAnswerPlatforms(): readonly Phaser.Physics.Arcade.Sprite[] {
+    return (this.platforms.getChildren() as Phaser.Physics.Arcade.Sprite[])
+      .filter((platform) => platform.getData('kind') === 'answer');
+  }
+
+  getRoutePlatforms(): readonly Phaser.Physics.Arcade.Sprite[] {
     return this.platforms.getChildren() as Phaser.Physics.Arcade.Sprite[];
   }
 
@@ -177,6 +213,15 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private hitHazard(): void {
+    if (!this.running || this.hazardLocked) return;
+    this.hazardLocked = true;
+    this.player.setPosition(WORLD_WIDTH / 2, GROUND_Y - 70);
+    this.player.setVelocity(0, 0);
+    this.events.emit('route-penalty');
+    this.time.delayedCall(550, () => { this.hazardLocked = false; });
+  }
+
   private createBackdrop(): void {
     const graphics = this.add.graphics();
     graphics.fillStyle(0xeadcb9, 1).fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
@@ -193,5 +238,22 @@ export class GameScene extends Phaser.Scene {
     graphics.lineStyle(4, 0xd5aa50, 1).strokeRoundedRect(2, 2, 296, 44, 5);
     graphics.generateTexture('answer-platform', 300, 48);
     graphics.destroy();
+  }
+
+  private ensureRouteTextures(): void {
+    if (!this.textures.exists('route-platform')) {
+      const support = this.make.graphics({ x: 0, y: 0 }, false);
+      support.fillStyle(0x5b3514, 1).fillRoundedRect(0, 0, 160, 24, 5);
+      support.lineStyle(3, 0xd5aa50, 1).strokeRoundedRect(1, 1, 158, 22, 4);
+      support.generateTexture('route-platform', 160, 24);
+      support.destroy();
+    }
+    if (!this.textures.exists('sharp-hazard')) {
+      const hazard = this.make.graphics({ x: 0, y: 0 }, false);
+      hazard.fillStyle(0x7d251d, 1).fillTriangle(0, 36, 17, 0, 34, 36);
+      hazard.lineStyle(3, 0xf0c768, 1).strokeTriangle(1, 35, 17, 2, 33, 35);
+      hazard.generateTexture('sharp-hazard', 34, 36);
+      hazard.destroy();
+    }
   }
 }

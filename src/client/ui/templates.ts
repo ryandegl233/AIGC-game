@@ -44,7 +44,7 @@ export function gameTemplate(): string {
   return `
     <main class="screen screen-game">
       <header class="game-hud">
-        <div class="hud-block hud-left"><span data-hud="level">第一乐章</span><strong data-hud="question">题目 1/3</strong></div>
+        <div class="hud-block hud-left"><span data-hud="level">第一乐章</span><strong data-hud="question">题目 1/3</strong><small class="now-playing" data-now-playing>正在演奏：准备乐谱…</small></div>
         <div class="hud-timer" data-hud="timer" aria-live="polite">00:30</div>
         <div class="hud-block hud-right"><span data-hud="lives">♥ ♥ ♥</span><strong data-hud="score">0000</strong></div>
       </header>

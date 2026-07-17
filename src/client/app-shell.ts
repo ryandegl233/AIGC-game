@@ -71,6 +71,11 @@ export class AppShell {
     if (heading) heading.textContent = question.prompt;
   }
 
+  showNowPlaying(piece: { composer: string; title: string }): void {
+    const label = this.root.querySelector<HTMLElement>('[data-now-playing]');
+    if (label) label.textContent = `正在演奏：${piece.composer} · ${piece.title}`;
+  }
+
   setStatus(message: string): void {
     const status = this.root.querySelector<HTMLElement>('[data-status]');
     if (status) status.textContent = message;

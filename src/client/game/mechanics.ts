@@ -50,6 +50,7 @@ export function createPhaserMechanic(
 ): MechanicLifecycle {
   const origins = platforms.map((platform) => ({ x: platform.x, y: platform.y, alpha: platform.alpha }));
   let tweens: Phaser.Tweens.Tween[] = [];
+  let timers: Phaser.Time.TimerEvent[] = [];
 
   const refresh = (platform: Phaser.Physics.Arcade.Sprite) => platform.refreshBody();
   const addTween = (
@@ -70,45 +71,34 @@ export function createPhaserMechanic(
 
   const startMotion = () => {
     if (config.type === 'static') return;
-    if (config.type === 'horizontal') addTween(platforms[1], { x: (platforms[1]?.x ?? 0) + config.amplitude });
-    if (config.type === 'vertical') {
-      addTween(platforms[0], { y: (platforms[0]?.y ?? 0) - config.amplitude });
-      addTween(platforms[2], { y: (platforms[2]?.y ?? 0) + config.amplitude * 0.55 });
-    }
-    if (config.type === 'phrase-lift') {
-      platforms.forEach((platform, index) => addTween(platform, {
-        y: platform.y - config.amplitude,
-        delay: index * 170,
-      }));
-    }
-    if (config.type === 'scroll') {
-      platforms.forEach((platform) => addTween(platform, { x: platform.x + config.amplitude }));
-    }
-    if (config.type === 'pulse') {
-      platforms.forEach((platform, index) => addTween(platform, {
-        y: platform.y - config.amplitude * (index === 1 ? 1 : 0.55),
-        alpha: 0.62,
-        delay: index * 120,
-      }));
-    }
-    if (config.type === 'mixed' || config.type === 'final') {
-      addTween(platforms[0], { x: (platforms[0]?.x ?? 0) + config.amplitude });
-      addTween(platforms[1], { y: (platforms[1]?.y ?? 0) - config.amplitude });
-      addTween(platforms[2], {
-        x: (platforms[2]?.x ?? 0) - config.amplitude * 0.7,
-        y: (platforms[2]?.y ?? 0) + config.amplitude * 0.45,
-        alpha: config.type === 'final' ? 0.68 : 0.82,
-      });
-    }
+    platforms.forEach((platform, index) => {
+      const motion = platform.getData('motion') as string | undefined;
+      if (motion === 'horizontal') addTween(platform, { x: platform.x + config.amplitude * 0.62, delay: index * 60 });
+      if (motion === 'vertical') addTween(platform, { y: platform.y - config.amplitude * 0.58, delay: index * 60 });
+      if (motion === 'blink') {
+        const body = platform.body as Phaser.Physics.Arcade.StaticBody;
+        timers.push(scene.time.addEvent({
+          delay: Math.max(450, config.periodMs / 2),
+          loop: true,
+          callback: () => {
+            body.enable = !body.enable;
+            platform.setAlpha(body.enable ? 1 : 0.24);
+          },
+        }));
+      }
+    });
   };
 
   const stopMotion = () => {
     tweens.forEach((tween) => tween.stop());
     tweens = [];
+    timers.forEach((timer) => timer.remove(false));
+    timers = [];
     platforms.forEach((platform, index) => {
       const origin = origins[index];
       if (!origin) return;
       platform.setPosition(origin.x, origin.y).setAlpha(origin.alpha);
+      (platform.body as Phaser.Physics.Arcade.StaticBody).enable = true;
       refresh(platform);
     });
   };

@@ -2,6 +2,27 @@ import type { AiApi } from '../api-client';
 import { chooseOfflineQuestion } from '../data/offline-bank';
 import { questionSchema, type Question } from '../../shared/question-schema';
 
+export function shuffleQuestionOptions(
+  question: Question,
+  random: () => number = Math.random,
+): Question {
+  const options = question.options.map((text, index) => ({
+    text,
+    correct: index === question.correctIndex,
+  }));
+
+  for (let index = options.length - 1; index > 0; index -= 1) {
+    const targetIndex = Math.floor(random() * (index + 1));
+    [options[index], options[targetIndex]] = [options[targetIndex]!, options[index]!];
+  }
+
+  return {
+    ...question,
+    options: [options[0]!.text, options[1]!.text, options[2]!.text],
+    correctIndex: options.findIndex((option) => option.correct),
+  };
+}
+
 export class QuestionService {
   constructor(
     private readonly api: AiApi,
@@ -24,12 +45,17 @@ export class QuestionService {
       });
       if (response.ok) {
         const parsed = questionSchema.safeParse(response.data);
-        if (parsed.success && parsed.data.levelId === levelId) return parsed.data;
+        if (parsed.success && parsed.data.levelId === levelId) {
+          return shuffleQuestionOptions(parsed.data, this.random);
+        }
       }
     } catch {
       // Offline content is the normal fallback path.
     }
 
-    return chooseOfflineQuestion(levelId, excludedIds, this.random);
+    return shuffleQuestionOptions(
+      chooseOfflineQuestion(levelId, excludedIds, this.random),
+      this.random,
+    );
   }
 }

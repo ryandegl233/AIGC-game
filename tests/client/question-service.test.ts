@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AnalysisService } from '../../src/client/state/analysis-service';
-import { QuestionService } from '../../src/client/state/question-service';
+import { QuestionService, shuffleQuestionOptions } from '../../src/client/state/question-service';
 import { offlineQuestionBank } from '../../src/client/data/offline-bank';
 import type { AiApi } from '../../src/client/api-client';
 
@@ -12,12 +12,39 @@ const aiQuestion = {
 };
 
 describe('QuestionService', () => {
+  it('shuffles answer positions while keeping the correct answer aligned', () => {
+    const randomValues = [0.99, 0.1];
+    const question = shuffleQuestionOptions(aiQuestion, () => randomValues.shift() ?? 0);
+
+    expect(question.options).toEqual([
+      aiQuestion.options[1],
+      aiQuestion.options[0],
+      aiQuestion.options[2],
+    ]);
+    expect(question.correctIndex).toBe(1);
+    expect(question.options[question.correctIndex]).toBe(aiQuestion.options[aiQuestion.correctIndex]);
+    expect(aiQuestion.correctIndex).toBe(0);
+  });
+
+  it('randomizes AI questions before returning them', async () => {
+    const api: AiApi = {
+      generateQuestion: async () => ({ ok: true, data: aiQuestion }),
+      analyzeAnswer: async () => ({ ok: false, fallback: true, reason: 'missing_key' }),
+    };
+    const randomValues = [0.99, 0.1];
+    const service = new QuestionService(api, () => randomValues.shift() ?? 0);
+
+    const question = await service.next(1, 'early-baroque', 1, [], []);
+    expect(question.correctIndex).toBe(1);
+    expect(question.options[question.correctIndex]).toBe(aiQuestion.options[aiQuestion.correctIndex]);
+  });
+
   it('returns a valid AI question', async () => {
     const api: AiApi = {
       generateQuestion: async () => ({ ok: true, data: aiQuestion }),
       analyzeAnswer: async () => ({ ok: false, fallback: true, reason: 'missing_key' }),
     };
-    const service = new QuestionService(api, () => 0);
+    const service = new QuestionService(api, () => 0.99);
 
     await expect(service.next(1, 'early-baroque', 1, [], [])).resolves.toEqual(aiQuestion);
   });

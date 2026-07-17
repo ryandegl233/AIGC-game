@@ -16,6 +16,10 @@ function createHarness() {
   };
   const scene = { presentQuestion: vi.fn(), setRunning: vi.fn() };
   const mechanic = { preview: vi.fn(async () => undefined), start: vi.fn(), stop: vi.fn(), isRunning: vi.fn() };
+  const audio = {
+    startLevel: vi.fn(), startRun: vi.fn(), showAnalysis: vi.fn(), pause: vi.fn(),
+    resume: vi.fn(), stop: vi.fn(), routePenalty: vi.fn(),
+  };
   const dependencies: ControllerDependencies = {
     ui,
     scene,
@@ -29,6 +33,7 @@ function createHarness() {
       save: (next: SaveData) => { save = next; },
     },
     createMechanic: () => mechanic,
+    audio,
     clock: {
       setInterval: (callback) => { tick = callback; return 1; },
       clearInterval: () => { tick = undefined; },
@@ -36,7 +41,7 @@ function createHarness() {
   };
   const controller = new GameController(dependencies);
   return {
-    controller, dependencies, ui, scene, mechanic, question,
+    controller, dependencies, ui, scene, mechanic, audio, question,
     tick: () => tick?.(),
     continueAnalysis: () => continueAnalysis?.(),
     getSave: () => save,
@@ -52,12 +57,12 @@ describe('GameController', () => {
     expect(harness.controller.phase).toBe('ready');
     expect(harness.scene.setRunning).not.toHaveBeenCalledWith(true);
     harness.tick();
-    expect(harness.controller.secondsRemaining).toBe(30);
+    expect(harness.controller.secondsRemaining).toBe(34);
 
     harness.controller.startAttempt();
     expect(harness.scene.setRunning).toHaveBeenCalledWith(true);
     harness.tick();
-    expect(harness.controller.secondsRemaining).toBe(29);
+    expect(harness.controller.secondsRemaining).toBe(33);
   });
 
   it('judges a correct platform locally and advances after analysis', async () => {
@@ -116,5 +121,36 @@ describe('GameController', () => {
     harness.controller.resume();
     expect(harness.controller.phase).toBe('running');
     expect(harness.scene.setRunning).toHaveBeenLastCalledWith(true);
+  });
+
+  it('deducts three seconds for a route hazard without costing a life', async () => {
+    const harness = createHarness();
+    await harness.controller.startLevel(1);
+    harness.controller.startAttempt();
+
+    harness.controller.applyRoutePenalty();
+
+    expect(harness.controller.secondsRemaining).toBe(31);
+    expect(harness.controller.levelState.lives).toBe(3);
+    expect(harness.ui.setStatus).toHaveBeenLastCalledWith('撞上升号障碍：退回起点，扣除 3 秒。');
+  });
+
+  it('coordinates level music with running, analysis, pause, and route hazards', async () => {
+    const harness = createHarness();
+    await harness.controller.startLevel(1);
+    harness.controller.startAttempt();
+    harness.controller.applyRoutePenalty();
+    harness.controller.pause();
+    harness.controller.resume();
+    await harness.controller.selectAnswer(harness.question.correctIndex);
+    harness.controller.dispose();
+
+    expect(harness.audio.startLevel).toHaveBeenCalledWith(1);
+    expect(harness.audio.startRun).toHaveBeenCalledTimes(1);
+    expect(harness.audio.routePenalty).toHaveBeenCalledTimes(1);
+    expect(harness.audio.pause).toHaveBeenCalledTimes(1);
+    expect(harness.audio.resume).toHaveBeenCalledTimes(1);
+    expect(harness.audio.showAnalysis).toHaveBeenCalledWith(true);
+    expect(harness.audio.stop).toHaveBeenCalled();
   });
 });
